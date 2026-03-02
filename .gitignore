@@ -1,0 +1,22 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Debug artefacts
+tool_urls.log
+crew_run.log
+last_report.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDEs
+.vscode/
+.idea/
+*.swp

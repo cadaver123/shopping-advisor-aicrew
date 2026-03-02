@@ -1,0 +1,174 @@
+review_task:
+  description: >
+    Search for expert reviews for the following shopping query: "{query}"
+
+    Instructions:
+    1. Use the 'Expert Review Search' tool to find professional reviews.
+    2. If a review page URL looks promising, use 'Web Page Reader' to get
+       the full article text (limit to 2 pages maximum).
+    3. Extract and record for each product you find:
+       - Product name and exact model
+       - Overall review score (if available)
+       - Key strengths highlighted by reviewers
+       - Key weaknesses or criticisms
+       - Price mentioned in the review
+       - Source URL — ONLY if it was returned by the tool; never guess or construct one
+    4. Return a structured text summary — one section per product found.
+    IMPORTANT: Do not invent, construct, or infer any URL. Only copy URLs
+    verbatim from tool results. If no URL was returned, write "URL not available".
+  expected_output: >
+    A structured list of products with expert review data:
+    product name | score | strengths | weaknesses | price | source URL
+    Include at least 3-5 distinct products when possible.
+  agent: review_researcher
+
+reddit_task:
+  description: >
+    Search Reddit for community discussions about: "{query}"
+
+    Instructions:
+    1. Use 'Reddit Community Search' to find relevant threads.
+    2. Optionally use 'Web Page Reader' on 1-2 highly relevant threads.
+    3. Extract:
+       - Products that Reddit users most frequently recommend
+       - Common praise for each product (what users love)
+       - Common complaints or deal-breakers
+       - Any products specifically warned against
+       - The subreddit and URL of the most useful threads — ONLY if the
+         URL was returned by the tool; never guess or construct one
+    4. Note whether opinions are from audiophiles/enthusiasts or
+       casual users — this context matters.
+    IMPORTANT: Do not invent, construct, or infer any URL. Only copy URLs
+    verbatim from tool results. If no URL was returned, write "URL not available".
+  expected_output: >
+    A structured summary of Reddit community sentiment per product:
+    product name | community praise | community complaints |
+    recommendation frequency | source URLs
+    Cover at least 3-5 products discussed on Reddit.
+  agent: reddit_researcher
+
+allegro_task:
+  description: >
+    Find current offers on Allegro.pl for: "{query}"
+
+    Instructions:
+    1. Use 'Allegro.pl Offer Search' to find listings.
+    2. For each listing found record:
+       - Exact product name / model
+       - Price (in PLN; convert to USD at ~0.25 USD/PLN if possible)
+       - Whether the price includes VAT
+       - Shipping cost / free shipping?
+       - Seller rating (if visible in snippet)
+       - URL — copy it EXACTLY as returned by the tool; write "URL not available"
+         if the tool did not return one. NEVER construct or guess a URL.
+    3. Try to find at least 3-5 different product models, not just
+       multiple sellers of the same model.
+    4. Prioritise listings with good seller ratings and reasonable
+       prices within the user's budget.
+    IMPORTANT: Every URL you record must be copied verbatim from the tool
+    output. Do not modify, shorten, or reconstruct any URL.
+  expected_output: >
+    A table of Allegro.pl offers:
+    product model | price PLN | approx USD | shipping | seller rating | URL
+    Include 3-5 distinct product models.
+  agent: allegro_researcher
+
+aliexpress_task:
+  description: >
+    Find current offers on AliExpress for: "{query}"
+
+    Instructions:
+    1. Use 'AliExpress Offer Search' to find listings.
+    2. For each listing found record:
+       - Exact product name / model
+       - Price in USD
+       - Shipping cost and estimated delivery time
+       - Number of orders / sales count (reliability indicator)
+       - Seller / store rating
+       - URL — copy it EXACTLY as returned by the tool; write "URL not available"
+         if the tool did not return one. NEVER construct or guess a URL.
+    3. Flag any products that look like clones or fakes
+       (suspiciously low price, unbranded, etc.).
+    4. Cover at least 3-5 different product models.
+    IMPORTANT: Every URL you record must be copied verbatim from the tool
+    output. Do not modify, shorten, or reconstruct any URL.
+  expected_output: >
+    A table of AliExpress offers:
+    product model | price USD | shipping | orders | seller rating | URL | notes
+    Include 3-5 distinct product models, noting any quality concerns.
+  agent: aliexpress_researcher
+
+analysis_task:
+  description: >
+    Analyse all gathered research data for the query: "{query}"
+
+    You have received:
+      - Expert review findings
+      - Reddit community sentiment
+      - Allegro.pl offers
+      - AliExpress offers
+
+    Instructions:
+    1. Consolidate information for each unique product model.
+    2. For each product produce:
+       a) PROS — list 3-6 genuine strengths backed by data
+       b) CONS — list 2-5 genuine weaknesses backed by data
+       c) VALUE SCORE (1-10): weighs price, quality, features,
+          community satisfaction
+       d) BEST FOR: one sentence describing the ideal buyer
+    3. Identify the top 3-5 products that best answer the user's query.
+    4. Preserve all Allegro and AliExpress URLs exactly as you received
+       them — copy them verbatim, do not modify or reconstruct them.
+       If no URL was provided for a product, write "URL not available".
+       NEVER invent or guess a URL.
+    5. Note any major concerns (fake products, quality issues, missing
+       features relative to competitors at the same price).
+  expected_output: >
+    A detailed per-product analysis structured as:
+    ## [Product Name]
+    - Value Score: X/10
+    - Best For: ...
+    - Pros: bulleted list
+    - Cons: bulleted list
+    - Allegro links: list of URLs
+    - AliExpress links: list of URLs
+    - Review sources: list of URLs
+
+    Cover the top 3-5 products, best first.
+  agent: shopping_analyst
+
+final_report_task:
+  description: >
+    Create the final shopping recommendation report for: "{query}"
+
+    Using the analysis provided, write a polished Markdown report.
+
+    Required structure:
+    1. Header — restate the user's query and a one-sentence verdict.
+    2. Quick Picks — a summary table: Rank | Product | Score | Best For | Starting Price.
+    3. Detailed Reviews — one section per product (ordered best to worst):
+       - Model name as H3 heading with its rank (1st, 2nd, 3rd etc.)
+       - Score badge, Best For sentence
+       - Pros (bullet list, prefix each with a checkmark)
+       - Cons (bullet list, prefix each with a cross)
+       - Where to Buy:
+           - Allegro.pl: link(s) with price
+           - AliExpress: link(s) with price
+       - Expert Reviews: link(s)
+    4. Bottom Line — 2-3 sentences on which product to buy and why.
+
+    Formatting rules:
+    - Use Markdown (headers, bullet points, bold, tables).
+    - Keep individual bullet points concise (15 words or fewer).
+    - Every product link must appear as a clickable Markdown hyperlink: [Visible Text](URL)
+    - CRITICAL: Do NOT invent, guess, or construct any URL or price.
+      Only use URLs and prices that appear verbatim in the analysis.
+      If no URL exists for a product, omit the link entirely — do not
+      write a placeholder or a made-up link.
+  expected_output: >
+    A complete, well-formatted Markdown shopping report with:
+    - Quick-pick summary table
+    - Detailed section per product with pros/cons and real buy links
+    - A clear bottom-line recommendation
+    The report should be readable and actionable by a non-technical shopper.
+  agent: shopping_advisor

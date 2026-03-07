@@ -1,158 +1,169 @@
 """
 Shopping Advisor — CrewAI multi-agent system
-=============================================
-Uses Together.ai (DeepSeek-V3) + Serper.dev to research products across
-expert reviews, Reddit, Allegro.pl and AliExpress, then returns a ranked
-Markdown report.
 
-Usage
------
+Usage:
     python main.py
-    # or pass a query directly:
-    python main.py "Best noise-cancelling headphones under $250"
+    python main.py "gaming mouse under 200 PLN"
 """
 
-import re
-import sys
+import logging
 import os
+import sys
 from pathlib import Path
-from dotenv import load_dotenv
-import requests
 
-# Load environment variables from .env (if present)
+import yaml
+from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent / ".env")
 
 
-def _check_env() -> list[str]:
-    """Return a list of missing required environment variables."""
-    required = ["TOGETHER_API_KEY", "SERPER_API_KEY"]
-    return [v for v in required if not os.environ.get(v)]
+# ---------------------------------------------------------------------------
+# Logging — shopping_advisor.tools writes to tool_urls.log + stdout
+# ---------------------------------------------------------------------------
+
+def _setup_logging() -> None:
+    level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    fmt = logging.Formatter("%(asctime)s %(message)s")
+    logger = logging.getLogger("shopping_advisor.tools")
+    logger.setLevel(level)
+    logger.propagate = False
+    fh = logging.FileHandler("tool_urls.log")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
 
 
-def _print_banner() -> None:
-    try:
-        from rich.console import Console
-        from rich.panel import Panel
-
-        console = Console()
-        console.print(
-            Panel.fit(
-                "[bold cyan]🛍  Shopping Advisor[/bold cyan]\n"
-                "[dim]Powered by CrewAI · Together.ai · DeepSeek-V3[/dim]",
-                border_style="cyan",
-            )
-        )
-    except ImportError:
-        print("=" * 60)
-        print("  Shopping Advisor — CrewAI + Together.ai / DeepSeek-V3")
-        print("=" * 60)
+_setup_logging()
 
 
-def _check_urls(text: str) -> None:
-    """Print HTTP status for every URL found in the report."""
-    urls = re.findall(r'https?://[^\s\)\]"<>]+', text)
-    if not urls:
-        print("No URLs found in the report.")
-        return
+# ---------------------------------------------------------------------------
+# Token tracking via litellm success callback
+# ---------------------------------------------------------------------------
 
-    print(f"Checking {len(urls)} URL(s) found in the report…")
-    for url in urls:
+_token_totals: dict = {"prompt": 0, "completion": 0, "requests": 0}
+
+
+def _setup_token_tracking() -> None:
+    import litellm
+
+    def _on_success(kwargs, response_obj, start_time, end_time):
         try:
-            r = requests.head(url, timeout=5, allow_redirects=True,
-                              headers={"User-Agent": "Mozilla/5.0"})
-            status = r.status_code
-        except Exception as exc:
-            status = f"ERROR: {exc}"
-        marker = "OK " if status == 200 else "BAD"
-        print(f"  [{marker}] {status}  {url}")
+            usage = response_obj.usage
+            _token_totals["prompt"] += getattr(usage, "prompt_tokens", 0) or 0
+            _token_totals["completion"] += getattr(usage, "completion_tokens", 0) or 0
+            _token_totals["requests"] += 1
+        except Exception:
+            pass
+
+    litellm.success_callback = [_on_success]
 
 
-def _print_result(result: str) -> None:
-    try:
-        from rich.console import Console
-        from rich.markdown import Markdown
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-        Console().print(Markdown(result))
-    except ImportError:
-        print(result)
+def _check_env() -> list[str]:
+    return [v for v in ("TOGETHER_API_KEY", "SERPER_API_KEY") if not os.environ.get(v)]
 
 
 def _get_query() -> str:
-    """Return the user's shopping query from CLI arg or interactive prompt."""
     if len(sys.argv) > 1:
         return " ".join(sys.argv[1:])
-
-    _print_banner()
-    print()
     print("Describe what you want to buy and your budget.")
-    print('Example: "Best headphones between $200 and $250"')
-    print()
-    query = input("Your query: ").strip()
+    print('Example: "gaming mouse under 200 PLN"')
+    query = input("\nYour query: ").strip()
     if not query:
         print("No query provided. Exiting.")
         sys.exit(0)
     return query
 
 
-def main() -> None:
-    # ------------------------------------------------------------------ env
-    missing = _check_env()
-    if missing:
-        print("[ERROR] The following environment variables are not set:")
-        for var in missing:
-            print(f"  • {var}")
-        print()
-        print("Copy .env.example to .env and fill in your API keys.")
-        sys.exit(1)
+def _print_token_usage(output) -> None:
+    prompt = _token_totals["prompt"]
+    completion = _token_totals["completion"]
+    requests = _token_totals["requests"]
 
-    # ------------------------------------------------------------------ query
-    query = _get_query()
+    if prompt == 0:
+        metrics = getattr(output, "token_usage", None)
+        if metrics:
+            prompt = getattr(metrics, "prompt_tokens", 0) or 0
+            completion = getattr(metrics, "completion_tokens", 0) or 0
+            requests = getattr(metrics, "successful_requests", 0) or 0
 
-    print()
-    print(f"Researching: {query!r}")
-    print("This may take a minute or two — multiple agents are working in parallel…")
-    print()
-
-    # ------------------------------------------------------------------ run
-    # Import here so env vars are loaded before any module-level LLM init
-    from crew import ShoppingAdvisorCrew
+    cfg = yaml.safe_load(
+        (Path(__file__).parent / "config" / "models.yaml").read_text(encoding="utf-8")
+    )
+    model = f"together_ai/{cfg['brain_llm']['model']}"
 
     try:
-        crew_instance = ShoppingAdvisorCrew().crew()
-        output = crew_instance.kickoff(inputs={"query": query})
-        result = str(output)
+        import litellm
+        cost = litellm.completion_cost(
+            completion_response=None,
+            model=model,
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+        )
+    except Exception:
+        cost = None
 
-        # Dump each task's raw LLM output for URL debugging
-        print("\n" + "=" * 60)
-        print("DEBUG: Raw task outputs (compare URLs against tool_urls.log)")
-        print("=" * 60)
-        for task in crew_instance.tasks:
-            print(f"\n--- {task.name} ---")
-            if task.output:
-                print(task.output.raw)
-        print("=" * 60 + "\n")
+    print("=" * 50)
+    print(f"  Prompt    : {prompt:>10,} tokens")
+    print(f"  Completion: {completion:>10,} tokens")
+    print(f"  Total     : {prompt + completion:>10,} tokens")
+    print(f"  Requests  : {requests:>10,}")
+    if cost is not None:
+        print(f"  Est. cost : ${cost:>8.4f}")
+    print("=" * 50)
+
+
+def _print_result(result: str) -> None:
+    try:
+        from rich.console import Console
+        from rich.markdown import Markdown
+        Console().print(Markdown(result))
+    except ImportError:
+        print(result)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    missing = _check_env()
+    if missing:
+        print("[ERROR] Missing environment variables:")
+        for v in missing:
+            print(f"  • {v}")
+        sys.exit(1)
+
+    _setup_token_tracking()
+
+    from crew import ShoppingAdvisorCrew
+
+    query = _get_query()
+    print(f"\nSearching: {query!r}\n")
+
+    try:
+        output = ShoppingAdvisorCrew().crew().kickoff(inputs={"query": query})
+        result = str(output)
     except KeyboardInterrupt:
-        print("\nAborted by user.")
+        print("\nAborted.")
         sys.exit(0)
     except Exception as exc:
-        print(f"\n[ERROR] The crew encountered an error:\n  {exc}")
+        print(f"\n[ERROR] {exc}")
         raise
 
-    # ------------------------------------------------------------------ output
     print()
-    _print_banner()
+    _print_token_usage(output)
     print()
     _print_result(result)
 
-    # Optionally save to file
     out_file = Path(__file__).parent / "last_report.md"
     out_file.write_text(result, encoding="utf-8")
-    print()
-    print(f"Report saved to: {out_file}")
-
-    # URL validation
-    print()
-    _check_urls(result)
+    print(f"\nSaved to: {out_file}")
 
 
 if __name__ == "__main__":

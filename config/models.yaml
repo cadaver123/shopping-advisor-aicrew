@@ -1,0 +1,23 @@
+# Brain: qualitative synthesis, market analysis, gap auditing (Llama 70B)
+brain_llm:
+  model: "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+  temperature: 0.0
+  max_tokens: 8192
+
+# Muscle: structured data extraction, price lookup, review/sentiment parsing (Mistral 24B)
+muscle_llm:
+  model: "mistralai/Mistral-Small-24B-Instruct-2501"
+  temperature: 0.0
+  max_tokens: 4096
+
+# Writer: final Markdown report synthesis (DeepSeek-V3)
+writer_llm:
+  model: "deepseek-ai/DeepSeek-V3"
+  temperature: 0.1
+  max_tokens: 8192
+
+interactive_llm:
+  model: "deepseek-ai/DeepSeek-V3"
+  temperature: 0.3
+  max_tokens: 4096
+  timeout: 120

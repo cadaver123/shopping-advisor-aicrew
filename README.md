@@ -1,118 +1,126 @@
-# Shopping Advisor — CrewAI Multi-Agent System
+# Shopping Advisor
 
-A multi-agent shopping research assistant built with [CrewAI](https://github.com/crewAIInc/crewAI). Given a natural-language shopping query, six specialised agents work in parallel to gather expert reviews, Reddit community sentiment, and live marketplace prices from Allegro.pl and AliExpress, then synthesise everything into a ranked Markdown report.
+A pipeline that takes a natural-language shopping query in any language and returns community-vetted product recommendations with honest pros and cons — no marketing copy, no hallucinated prices.
 
 ## How it works
 
 ```
-User query
+User query (any language)
     │
-    ├── review_researcher   ──► Expert Review Search + Web Page Reader
-    ├── reddit_researcher   ──► Reddit Community Search + Web Page Reader
-    ├── allegro_researcher  ──► Allegro.pl Offer Search + Web Page Reader
-    └── aliexpress_researcher──► AliExpress Offer Search + Web Page Reader
-    │         (all four run in parallel)
+    ├── 1. DorkGenerator
+    │       Detects language, category, market scope (global/local)
+    │       Converts and buckets budget to USD ($20/$50/$100/$200/$500/$1000)
+    │       Generates 3 optimised forum search queries in English or native language
     │
-    ├── shopping_analyst    ──► Consolidates all findings, scores each product
+    ├── 2. SerperUrlCollector
+    │       Runs queries through Serper.dev (Google Search API)
+    │       Returns deduplicated forum/discussion URLs
     │
-    └── shopping_advisor    ──► Produces the final Markdown report
+    ├── 3. ProductsExtractor
+    │       Scrapes each URL via stealth Playwright browser
+    │       LLM audits each candidate product:
+    │         - INTERNAL PRICE CHECK: estimates MSRP from training data
+    │         - HARD FILTER: discards anything over budget immediately
+    │         - TYPE CHECK: discards wrong product types
+    │       Returns up to 10 KEEP products with audit log
+    │
+    └── 4. RagEnricher
+            Chunks scraped pages, embeds via multilingual-e5-large-instruct
+            For each product: retrieves top-6 relevant chunks by cosine similarity
+            LLM synthesises: pros, cons, street price, one-sentence verdict
 ```
 
-All web searches go through [Serper.dev](https://serper.dev) (Google Search API). The LLM backend is [DeepSeek-V3](https://www.together.ai) via Together.ai.
+## Tech stack
+
+| Component | Technology |
+|---|---|
+| LLM (extraction, analysis) | DeepSeek-V3 via Together.ai |
+| LLM (enrichment) | Llama-3.3-70B-Instruct-Turbo via Together.ai |
+| Embeddings | `intfloat/multilingual-e5-large-instruct` via Together.ai (1024-dim) |
+| Web search | Serper.dev (Google Search API) |
+| Browser scraping | Playwright + playwright-stealth |
+| Text extraction | trafilatura |
+| DDG fallback search | ddgs |
 
 ## Prerequisites
 
 - Python 3.11+
 - A [Together.ai](https://www.together.ai) API key
 - A [Serper.dev](https://serper.dev) API key
+- Playwright browsers installed
 
 ## Installation
 
 ```bash
 git clone <repo-url>
-cd crewai
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+cd shopping-advisor-aicrew
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 ## Configuration
-
-Copy the example env file and fill in your keys:
 
 ```bash
 cp .env.example .env
 ```
 
 ```dotenv
-# .env
 TOGETHER_API_KEY=your_together_api_key
 SERPER_API_KEY=your_serper_api_key
-
-# Optional — defaults to deepseek-ai/DeepSeek-V3
-TOGETHER_MODEL=deepseek-ai/DeepSeek-V3
 ```
 
 ## Usage
 
-**Interactive mode:**
 ```bash
+# Interactive prompt
 python main.py
-```
 
-**Query as a CLI argument:**
-```bash
+# Query as CLI argument
 python main.py "Best noise-cancelling headphones under $250"
+python main.py "Najlepsze słuchawki do 250zł"
+python main.py "Beste Kopfhörer unter 200€"
 ```
-
-The final report is printed to the terminal and saved to `last_report.md`.
 
 ## Project structure
 
 ```
-crewai/
-├── main.py               # Entry point — query input, crew kickoff, output
-├── crew.py               # Agent and task definitions (@CrewBase pattern)
-├── tools.py              # Custom BaseTool implementations (search + web reader)
-├── config/
-│   ├── agents.yaml       # Agent roles, goals, and backstories
-│   └── tasks.yaml        # Task descriptions and expected outputs
-├── requirements.txt
-└── last_report.md        # Auto-saved report from the last run
+├── main.py                        # Entry point — orchestrates all four phases
+├── services/
+│   ├── dork_generator.py          # Query generation + budget conversion/bucketing
+│   ├── serper_url_collector.py    # Serper API → deduplicated forum URLs
+│   ├── products_extractor.py      # Scrape + LLM budget auditor → product list
+│   ├── rag_store.py               # Chunk + embed pages, cosine similarity search
+│   └── rag_enricher.py            # Per-product RAG retrieval + pros/cons synthesis
+├── tools/
+│   ├── browser.py                 # Stealth Playwright worker thread
+│   ├── embeddings.py              # Together.ai embeddings wrapper (batched, retried)
+│   └── llm.py                     # Together.ai chat completions wrapper (with retry)
+└── config/
+    ├── models.yaml                # LLM model references (small/medium/strong)
+    └── tools/
+        ├── dork_generator.yaml    # Search query templates + bucketing tiers
+        ├── products_extractor.yaml# Budget auditor system prompt + DATA AUDITOR schema
+        └── rag_enricher.yaml      # Pros/cons synthesis prompt
 ```
 
-## Agents
+## Budget filtering
 
-| Agent | Role | Tools |
-|---|---|---|
-| `review_researcher` | Expert Review Researcher | Expert Review Search, Web Page Reader |
-| `reddit_researcher` | Reddit Community Analyst | Reddit Community Search, Web Page Reader |
-| `allegro_researcher` | Allegro.pl Price Scout | Allegro.pl Offer Search, Web Page Reader |
-| `aliexpress_researcher` | AliExpress Deal Hunter | AliExpress Offer Search, Web Page Reader |
-| `shopping_analyst` | Shopping Data Analyst | _(none — synthesises task outputs)_ |
-| `shopping_advisor` | Personal Shopping Advisor | _(none — writes final report)_ |
+The extractor applies a **zero-tolerance** budget policy. Every candidate product goes through a three-step audit logged to the terminal:
 
-## Report format
+```
+  ✓ [KEEP]    Moondrop Chu II ($19)   — MSRP under $50, matches type
+  ✗ [DISCARD] Sony MDR7506 ($100)    — MSRP ($100) exceeds $50 budget
+  ✗ [DISCARD] AKG K371 ($149)        — MSRP ($149) exceeds $50 budget
+```
 
-The final report is structured Markdown:
+Budgets in foreign currencies are converted to USD and rounded **down** to the nearest standard tier before being passed to the LLM, so queries never contain irregular numbers like `$62`.
 
-1. **Header** — restated query and one-sentence verdict
-2. **Quick Picks** — summary table: Rank | Product | Score | Best For | Starting Price
-3. **Detailed Reviews** — one section per product with pros, cons, and buy links
-4. **Bottom Line** — which product to buy and why
+## Logging
 
-## Debugging URL hallucinations
+Set `LOG_LEVEL=INFO` to see per-call LLM token usage, elapsed time, and embedding stats:
 
-The LLM occasionally fabricates or mutates URLs. Three debug artefacts are written on every run:
-
-| File | Contents |
-|---|---|
-| `tool_urls.log` | Every URL returned by Serper, tagged by tool name |
-| `crew_run.log` | Full agent Thought/Action/Observation trace |
-| terminal output | Per-task raw LLM outputs + live HTTP status check for every URL in the report |
-
-**Workflow:**
-1. Run the crew and note any broken links in the report.
-2. Search `tool_urls.log` for that URL — if it is absent, the LLM invented it.
-3. If it is present, open `crew_run.log` and search for the URL to find where it was mutated.
-4. The terminal URL check (`[OK] 200` / `[BAD] 404`) gives an instant pass/fail for every link without opening a browser.
+```
+[LLM] ProductsExtractor     | DeepSeek-V3                   | 8420p + 312c = 8732 tok | 14.2s
+[LLM] RagEnricher/Moondrop  | Llama-3.3-70B-Instruct-Turbo  |  980p +  98c = 1078 tok |  2.1s
+[Embed] 65 texts | 3.4s
+```

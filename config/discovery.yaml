@@ -1,0 +1,5 @@
+scraping:
+  num_results_per_query: 7    # Serper results per dork (3 queries × 7 = up to 21, deduplicated to 10-15)
+  max_total_urls: 15          # hard cap on URLs to collect
+  time_filter: "qdr:y2"      # past 2 years only
+  timeout: 15                 # Serper request timeout (seconds)

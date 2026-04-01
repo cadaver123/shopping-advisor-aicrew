@@ -1,0 +1,79 @@
+community_search:
+  search_query_template: '{query} best recommended site:reddit.com OR site:head-fi.org OR site:audiosciencereview.com'
+  num_results: 5
+  max_urls: 3
+  time_filter: "qdr:y2"
+  timeout: 15
+  max_chars_for_extraction: 12000
+
+shopping_search:
+  num_results: 20
+  timeout: 15
+
+source_discovery:
+  search_query_template: '{product_name} review OR "user review" OR forum OR discussion'
+  num_results: 20
+  max_urls: 6
+  time_filter: "qdr:y2"
+  timeout: 15
+  permanent_domains:
+    - reddit.com
+  domain_blocklist:
+    # E-commerce — major platforms
+    - amazon.com
+    - amazon.co.uk
+    - amazon.de
+    - amazon.fr
+    - amazon.es
+    - amazon.in
+    - amazon.com.au
+    - amazon.co.jp
+    - walmart.com
+    - bestbuy.com
+    - target.com
+    - ebay.com
+    - etsy.com
+    - aliexpress.com
+    - allegro.pl
+    - ceneo.pl
+    - morele.net
+    - x-kom.pl
+    # E-commerce — grey-market / reseller aggregators
+    - desertcart.com
+    - desertcart.sc
+    - desertcart.in
+    - ubuy.com
+    - ubuy.co.th
+    - ubuy.sc
+    - ubuy.co.ao
+    - ubuy.co.in
+    - ubuy.de.com
+    - ubuy.com.lb
+    - a.ubuy.com.kw
+    - u-buy.com.ng
+    - shop.app
+    - shop.tiktok.com
+    - microcenter.com
+    - hp.com
+    # Video & social media
+    - youtube.com
+    - youtu.be
+    - tiktok.com
+    - instagram.com
+    - facebook.com
+    - twitter.com
+    - x.com
+    - pinterest.com
+    # Search engines
+    - google.com
+    - bing.com
+    - yahoo.com
+    # Reference
+    - wikipedia.org
+    - wikimedia.org
+    # App stores
+    - apple.com
+    - play.google.com
+    # Office supplies / irrelevant
+    - officedepot.com
+    - pcnation.com

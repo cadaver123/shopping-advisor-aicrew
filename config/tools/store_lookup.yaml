@@ -1,0 +1,18 @@
+pricing:
+  # Target domains for result filtering and DDG site: queries
+  preferred_domains:
+    pl: ["ceneo.pl", "allegro.pl", "x-kom.pl", "morele.net", "amazon.pl"]
+    de: ["idealo.de", "amazon.de", "mediamarkt.de", "saturn.de"]
+    fr: ["fnac.com", "amazon.fr", "darty.com", "cdiscount.com"]
+    it: ["amazon.it", "euronics.it", "mediaworld.it"]
+    es: ["amazon.es", "pccomponentes.com", "mediamarkt.es"]
+    uk: ["amazon.co.uk", "currys.co.uk", "ebay.co.uk", "argos.co.uk"]
+    global: ["amazon.com", "aliexpress.com", "ebay.com"]
+    default: ["amazon.com", "ebay.com"]
+
+  price_extraction:
+    temperature: 0.0
+    system_prompt: |
+      Extract the current selling price of the product from the page text.
+      Return ONLY the price string (e.g. "299 zł", "$49.99", "1 299,00 PLN").
+      If no price is found, return null.

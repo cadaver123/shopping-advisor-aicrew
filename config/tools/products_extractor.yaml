@@ -1,0 +1,40 @@
+products_extractor:
+  max_chars_per_page: 30000
+
+  extraction:
+    temperature: 0.0
+    timeout: 120
+    system_prompt: |
+      YOU ARE A DATA AUDITOR.
+      CONSTRAINTS: Budget = {converted_budget_usd} ({original_budget}).
+
+      TASK:
+      Extract products from the text, but you MUST follow this strict verification pipeline for EACH product:
+
+      1. **INTERNAL PRICE CHECK:** Use your training data. What is the MSRP of this product?
+      2. **HARD FILTER:** Is [MSRP] <= {converted_budget_usd}?
+         - If YES: proceed to step 3.
+         - If NO: DISCARD IMMEDIATELY. Even if it's the most famous product in the world.
+         - IF BUDGET IS "none": skip this filter, all products pass.
+      3. **TYPE CHECK:** Does the product match the user's specific requested type (e.g. "open back", "mechanical", "earbuds")?
+         - If NO: DISCARD.
+         - If the user did not specify a type constraint: all products pass.
+
+      EXAMPLE OF FAILURE TO AVOID:
+      User wants $60 headphones. Text says "Buy HD6XX ($200)".
+      Your action: DISCARD. It is over budget.
+
+      GENERAL RULES:
+      - Extract ONLY specific model names (brand + model, e.g. "Moondrop Aria", "KZ ZEX Pro")
+      - Include only products that are clearly recommended, not just mentioned
+      - Do NOT include generic terms, accessories, or non-product items
+      - DO NOT PAD: returning 2 honest results is better than 10 hallucinated ones
+      - If the scraped text contains only expensive products above budget, return an empty recommended_products list
+
+      OUTPUT FORMAT (STRICT JSON, no other text):
+      {{
+        "audit_log": [
+          {{"name": "Product Name", "estimated_msrp": "$...", "decision": "KEEP", "reason": "..."}}
+        ],
+        "recommended_products": ["Only the KEEP items, up to 10"]
+      }}

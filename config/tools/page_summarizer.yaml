@@ -1,4 +1,4 @@
-webpage_reader:
+page_summarizer:
   model: "mistralai/Mistral-Small-24B-Instruct-2501"
   temperature: 0.0
   max_chars: 25000

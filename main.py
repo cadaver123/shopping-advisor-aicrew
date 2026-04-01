@@ -1,78 +1,46 @@
 """
-Shopping Advisor — CrewAI multi-agent system
+Shopping Advisor — Phase 1: Consensus Discovery + Pricing
+
+Steps:
+  1 — DorkGenerator:     query → search queries + market scope
+  2 — SerperUrlCollector: dorks → Serper → forum URLs
+  3 — ProductsExtractor: URLs → scrape + LLM → top 10 products
+  4 — PricingEnricher:   products → parallel DDG → prices + store links
 
 Usage:
     python main.py
-    python main.py "gaming mouse under 200 PLN"
+    python main.py "Best IEM headphones under $50"
+    python main.py "Best washing machine under 2000 PLN"
 """
 
+import json
 import logging
 import os
 import sys
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "WARNING").upper(),
+    format="%(asctime)s %(name)s %(message)s",
+)
 
-# ---------------------------------------------------------------------------
-# Logging — shopping_advisor.tools writes to tool_urls.log + stdout
-# ---------------------------------------------------------------------------
+from services.dork_generator import DorkGenerator
+from services.serper_url_collector import SerperUrlCollector
+from services.products_extractor import ProductsExtractor
+from services.rag_store import RagStore
+from services.rag_enricher import RagEnricher
 
-def _setup_logging() -> None:
-    level = os.environ.get("LOG_LEVEL", "INFO").upper()
-    fmt = logging.Formatter("%(asctime)s %(message)s")
-    logger = logging.getLogger("shopping_advisor.tools")
-    logger.setLevel(level)
-    logger.propagate = False
-    fh = logging.FileHandler("tool_urls.log")
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
-    logger.addHandler(sh)
-
-
-_setup_logging()
-
-
-# ---------------------------------------------------------------------------
-# Token tracking via litellm success callback
-# ---------------------------------------------------------------------------
-
-_token_totals: dict = {"prompt": 0, "completion": 0, "requests": 0}
-
-
-def _setup_token_tracking() -> None:
-    import litellm
-
-    def _on_success(kwargs, response_obj, start_time, end_time):
-        try:
-            usage = response_obj.usage
-            _token_totals["prompt"] += getattr(usage, "prompt_tokens", 0) or 0
-            _token_totals["completion"] += getattr(usage, "completion_tokens", 0) or 0
-            _token_totals["requests"] += 1
-        except Exception:
-            pass
-
-    litellm.success_callback = [_on_success]
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _check_env() -> list[str]:
-    return [v for v in ("TOGETHER_API_KEY", "SERPER_API_KEY") if not os.environ.get(v)]
+logger = logging.getLogger("shopping_advisor")
 
 
 def _get_query() -> str:
     if len(sys.argv) > 1:
         return " ".join(sys.argv[1:])
-    print("Describe what you want to buy and your budget.")
-    print('Example: "gaming mouse under 200 PLN"')
+    print('Describe what you want to buy, e.g. "gaming mouse under 200 PLN"')
     query = input("\nYour query: ").strip()
     if not query:
         print("No query provided. Exiting.")
@@ -80,90 +48,62 @@ def _get_query() -> str:
     return query
 
 
-def _print_token_usage(output) -> None:
-    prompt = _token_totals["prompt"]
-    completion = _token_totals["completion"]
-    requests = _token_totals["requests"]
-
-    if prompt == 0:
-        metrics = getattr(output, "token_usage", None)
-        if metrics:
-            prompt = getattr(metrics, "prompt_tokens", 0) or 0
-            completion = getattr(metrics, "completion_tokens", 0) or 0
-            requests = getattr(metrics, "successful_requests", 0) or 0
-
-    cfg = yaml.safe_load(
-        (Path(__file__).parent / "config" / "models.yaml").read_text(encoding="utf-8")
-    )
-    model = f"together_ai/{cfg['brain_llm']['model']}"
-
-    try:
-        import litellm
-        cost = litellm.completion_cost(
-            completion_response=None,
-            model=model,
-            prompt_tokens=prompt,
-            completion_tokens=completion,
-        )
-    except Exception:
-        cost = None
-
-    print("=" * 50)
-    print(f"  Prompt    : {prompt:>10,} tokens")
-    print(f"  Completion: {completion:>10,} tokens")
-    print(f"  Total     : {prompt + completion:>10,} tokens")
-    print(f"  Requests  : {requests:>10,}")
-    if cost is not None:
-        print(f"  Est. cost : ${cost:>8.4f}")
-    print("=" * 50)
-
-
-def _print_result(result: str) -> None:
-    try:
-        from rich.console import Console
-        from rich.markdown import Markdown
-        Console().print(Markdown(result))
-    except ImportError:
-        print(result)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main() -> None:
-    missing = _check_env()
+    missing = [v for v in ("TOGETHER_API_KEY", "SERPER_API_KEY") if not os.environ.get(v)]
     if missing:
-        print("[ERROR] Missing environment variables:")
-        for v in missing:
-            print(f"  • {v}")
+        print("[ERROR] Missing env vars:", ", ".join(missing))
         sys.exit(1)
 
-    _setup_token_tracking()
-
-    from crew import ShoppingAdvisorCrew
-
     query = _get_query()
-    print(f"\nSearching: {query!r}\n")
+    print(f"\nQuery: {query!r}\n")
 
-    try:
-        output = ShoppingAdvisorCrew().crew().kickoff(inputs={"query": query})
-        result = str(output)
-    except KeyboardInterrupt:
-        print("\nAborted.")
-        sys.exit(0)
-    except Exception as exc:
-        print(f"\n[ERROR] {exc}")
-        raise
+    dorks_result = DorkGenerator().generate(query)
+    print(f"Scope:       {dorks_result['market_scope']}")
+    print(f"User lang:   {dorks_result.get('user_language', '?')}")
+    print(f"Search lang: {dorks_result['search_language']}")
+    print(f"Category:    {dorks_result['detected_category']}")
 
-    print()
-    _print_token_usage(output)
-    print()
-    _print_result(result)
+    urls = SerperUrlCollector().run(dorks_result["search_queries"])
 
-    out_file = Path(__file__).parent / "last_report.md"
-    out_file.write_text(result, encoding="utf-8")
-    print(f"\nSaved to: {out_file}")
+    extractor = ProductsExtractor()
+    products, pages = extractor.run(
+        urls,
+        query=query,
+        budget=dorks_result.get("bucketed_budget_usd", dorks_result.get("converted_budget_usd", "none")),
+        original_budget=dorks_result.get("original_budget", "none"),
+    )
+
+    if not products:
+        print("\nNo products found within budget.")
+        return
+
+    store = RagStore()
+    store.add(pages)
+
+    enriched = RagEnricher().run(products, store)
+
+    print(f"\n{'='*60}")
+    for item in enriched:
+        print(f"\n  {item['name']}")
+        if item.get("price_mentioned"):
+            print(f"    Price: {item['price_mentioned']}")
+        for pro in item.get("pros", []):
+            print(f"    + {pro}")
+        for con in item.get("cons", []):
+            print(f"    - {con}")
+        if item.get("verdict"):
+            print(f"    → {item['verdict']}")
+    print(f"\nDone. {len(urls)} URLs scraped, {len(products)} products analyzed.")
+
+    logger.info(
+        "[Result] %s",
+        json.dumps(
+            {"query": query, "urls_scraped": urls, "products": enriched},
+            indent=2,
+            ensure_ascii=False,
+        ),
+    )
+
 
 
 if __name__ == "__main__":
